@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.pyc
+vectorstore/
+.ipynb_checkpoints/
+.vscode/
+.idea/
+*.log
