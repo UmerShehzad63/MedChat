@@ -1,10 +1,9 @@
 from dotenv import load_dotenv
 import os
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
-# MultiQueryRetriever not available in this environment; provide a local implementation
 from typing import List
 
 
@@ -29,14 +28,11 @@ class LocalMultiQueryRetriever:
 
     def _generate_rewrites(self, question: str) -> List[str]:
         prompt = self.rewrite_template.format(n=self.n_queries, question=question)
-        # ask the LLM to generate n queries separated by newlines
         resp = self.llm.invoke(prompt)
-        text = resp if isinstance(resp, str) else getattr(resp, "text", str(resp))
-        # split lines and keep first n non-empty lines
+        text = resp if isinstance(resp, str) else getattr(resp, "content", str(resp))
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         if len(lines) >= self.n_queries:
             return lines[: self.n_queries]
-        # fallback: naive token-based splits
         joined = " ".join(lines)
         parts = [joined[i:: self.n_queries] for i in range(self.n_queries)]
         return [p.strip() for p in parts if p.strip()][: self.n_queries]
@@ -46,7 +42,6 @@ class LocalMultiQueryRetriever:
         seen = set()
         results = []
         for q in rewrites:
-            # Support multiple retriever APIs across LangChain versions
             retr = self.retriever
             if hasattr(retr, "get_relevant_documents"):
                 docs = retr.get_relevant_documents(q)
@@ -56,7 +51,6 @@ class LocalMultiQueryRetriever:
                 except TypeError:
                     docs = retr._get_relevant_documents(q)
             else:
-                # fallback to underlying vectorstore similarity_search
                 vs = getattr(retr, "vectorstore", None)
                 if vs and hasattr(vs, "similarity_search"):
                     docs = vs.similarity_search(q, k=self.n_queries)
@@ -69,21 +63,24 @@ class LocalMultiQueryRetriever:
                     results.append(d)
         return results
 
+
 # 1. Setup LLM
 load_dotenv()
 
+
 def load_llm():
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise ValueError("GEMINI_API_KEY not found in environment variables")
-    
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash",
+        raise ValueError("OPENAI_API_KEY not found in environment variables")
+
+    llm = ChatOpenAI(
+        model="gpt-4o-mini",
         temperature=0.7,
-        google_api_key=api_key,
-        max_output_tokens=1000
+        openai_api_key=api_key,
+        max_tokens=1000,
     )
     return llm
+
 
 llm = load_llm()
 
@@ -144,8 +141,8 @@ High | Moderate | Low
 custom_prompt = PromptTemplate.from_template(prompt_template)
 embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 db = FAISS.load_local(DB_FAISS_PATH, embedding_model, allow_dangerous_deserialization=True)
-# use local implementation
 multiquery_retriever = LocalMultiQueryRetriever.from_llm(llm=llm, retriever=db.as_retriever(search_kwargs={"k": 3}))
+
 
 def answer_question(question):
     # Handle greetings with a default response
@@ -174,6 +171,7 @@ def answer_question(question):
     # Format the final output
     formatted_response = f"{answer}\n\nSources:\n{sources}"
     return formatted_response
+
 
 if __name__ == "__main__":
     query = input("Enter your question: ")
